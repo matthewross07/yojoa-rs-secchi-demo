@@ -136,7 +136,7 @@ dtest <- xgb.DMatrix(data = as.matrix(test[,band_met5_feats]),
 
 ### Parameter optimization taken from Sam Sillen
 
-```{r}
+```{r, eval = F}
 # 3) Hypertune xgboost parameters and save as 'best_params' 
 
 grid_train <- expand.grid(
@@ -161,7 +161,8 @@ hypertune_xgboost = function(train,test, grid){
                          early_stopping_rounds = 20)
   
   
-  summary <- grid %>% mutate(val_loss = xgb.naive$best_score, best_message = xgb.naive$best_msg)
+  summary <- grid %>% mutate(val_loss = xgb.naive$best_score, best_message = xgb.naive$best_msg,
+                             mod = list(xgb.naive))
   
   return(summary) 
 }
@@ -174,22 +175,17 @@ xgboost_hypertune <- grid_train %>%
     hypertune_xgboost(dtrain,dtest,current)
   })
 
-View(xgboost_hypertune)
 
-best_params <- xgboost_hypertune[xgboost_hypertune$val_loss==min(xgboost_hypertune$val_loss),]
+mod_summary <- xgboost_hypertune %>% 
+  select(-mod)
 
-best_params
-best_params <- list(booster = "gbtree", 
-                    objective = 'reg:squarederror',
-               eta=best_params$eta,
-               max_depth=best_params$max_depth, 
-               min_child_weight=best_params$min_child_weight, 
-               subsample=best_params$subsample, 
-               colsample_bytree=best_params$colsample_bytree)
+best_mod <- xgboost_hypertune[xgboost_hypertune$val_loss==min(xgboost_hypertune$val_loss),]
 
 
+View(mod_summary)
 
-best_params
+
+save(mod_summary,best_mod, file = 'data/models/paramsxg.RData')
 ```
 
 
@@ -197,20 +193,14 @@ best_params
 ### Parameter tuning
 
 
-```{r, include = F}
+```{r,}
 
+load('data/models/paramsxg.RData')
 
-#run the boost algo with those settings
-optimized_booster <- xgb.train(params = best_params, data = dtrain, nrounds = 1000, 
-                         watchlist = list(train = dtrain, val = dtest), 
-                         print_every_n =100,
-                         early_stopping_rounds = 20)
-
-
-
-
+optimized_booster <- best_mod$mod[[1]]
+# Apply best mod
 preds <- test %>% 
-  mutate(pred_secchi = predict(optimized_booster, dtest))
+  mutate(pred_secchi = predict(best_mod$mod[[1]], dtest))
 
 
 
@@ -224,8 +214,8 @@ evals <- preds %>%
             r2 = cor(secchi, pred_secchi)^2) 
 
 
-evals
 
+evals
 ```
 
 And let's visualize the predictions:
@@ -267,8 +257,7 @@ stack_xgb <- xgb.DMatrix(data = as.matrix(full_stack[,band_met5_feats]))
 
 full_stack_simp <- full_stack %>%
   mutate(secchi = predict(optimized_booster, stack_xgb)) %>%
-  select(date, location, secchi, mission) %>%
-  mutate(date = mdy)
+  select(date, location, secchi, mission) 
 
 situ_stack <- read_csv('data/in-situ/Secchi_completedataset.csv') %>%
   mutate(secchi = as.numeric(secchi),
@@ -279,12 +268,11 @@ situ_stack <- read_csv('data/in-situ/Secchi_completedataset.csv') %>%
 
 
 library(ggthemes)
-ggplot(situ_stack, aes(x = date, y = secchi, color = mission)) + 
+ggplot(situ_stack %>%
+         filter(location == 'E'), aes(x = date, y = secchi, color = mission)) + 
   geom_point() + 
-  scale_color_few() + 
-  theme_few() + 
-  facet_wrap(~location)
-
+  scale_color_manual(values = c('grey10','grey30','grey50','grey70','blue')) + 
+  theme_few() 
 
 ```
 
